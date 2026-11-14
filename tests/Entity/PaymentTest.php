@@ -9,7 +9,7 @@ use App\Enum\Currency;
 use App\Enum\PaymentStatus;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use Symfony\Component\Uid\UuidV7;
+use Symfony\Component\Uid\Uuid;
 
 class PaymentTest extends TestCase
 {
@@ -30,10 +30,10 @@ class PaymentTest extends TestCase
         $this->assertSame(PaymentStatus::PENDING, $payment->getStatus());
     }
 
-    public function testValidUuidV7(): void
+    public function testValidUuid(): void
     {
         $payment = new Payment(1250, Currency::UAH);
-        $this->assertInstanceOf(UuidV7::class, $payment->getId());
+        $this->assertInstanceOf(Uuid::class, $payment->getId());
     }
 
     public function testTimestampsAreSetAndEqualOnCreation(): void
