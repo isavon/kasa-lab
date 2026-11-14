@@ -14,19 +14,19 @@ class MoneyFormatterTest extends TestCase
     public static function amounts(): array
     {
         return [
-            [0, Currency::UAH, '0.00 '.Currency::UAH->value],
-            [0, Currency::USD, '0.00 '.Currency::USD->value],
-            [0, Currency::EUR, '0.00 '.Currency::EUR->value],
-            [5, Currency::UAH, '0.05 '.Currency::UAH->value],
-            [99, Currency::UAH, '0.99 '.Currency::UAH->value],
-            [100, Currency::UAH, '1.00 '.Currency::UAH->value],
-            [1250, Currency::UAH, '12.50 '.Currency::UAH->value],
-            [-1250, Currency::UAH, '-12.50 '.Currency::UAH->value],
-            [-5, Currency::UAH, '-0.05 '.Currency::UAH->value],
-            [-50, Currency::UAH, '-0.50 '.Currency::UAH->value],
-            [-150, Currency::UAH, '-1.50 '.Currency::UAH->value],
-            [PHP_INT_MAX, Currency::UAH, '92233720368547758.07 '.Currency::UAH->value],
-            [PHP_INT_MIN, Currency::UAH, '-92233720368547758.08 '.Currency::UAH->value],
+            [0, Currency::UAH, '0.00 UAH'],
+            [0, Currency::USD, '0.00 USD'],
+            [0, Currency::EUR, '0.00 EUR'],
+            [5, Currency::UAH, '0.05 UAH'],
+            [99, Currency::UAH, '0.99 UAH'],
+            [100, Currency::UAH, '1.00 UAH'],
+            [1250, Currency::UAH, '12.50 UAH'],
+            [-1250, Currency::UAH, '-12.50 UAH'],
+            [-5, Currency::UAH, '-0.05 UAH'],
+            [-50, Currency::UAH, '-0.50 UAH'],
+            [-150, Currency::UAH, '-1.50 UAH'],
+            [PHP_INT_MAX, Currency::UAH, '92233720368547758.07 UAH'],
+            [PHP_INT_MIN, Currency::UAH, '-92233720368547758.08 UAH'],
         ];
     }
 
@@ -43,6 +43,6 @@ class MoneyFormatterTest extends TestCase
         $this->expectException(\TypeError::class);
 
         $formatter = new MoneyFormatter();
-        $formatter->format('-50.0051', 'UAH');
+        $formatter->format('-50.0051', Currency::UAH);
     }
 }
