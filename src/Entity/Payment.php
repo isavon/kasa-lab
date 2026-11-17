@@ -39,6 +39,10 @@ class Payment
             throw new \InvalidArgumentException('The payment amount must be greater than zero.');
         }
 
+        if ($amount > $currency->maxAmount()) {
+            throw new \InvalidArgumentException('The amount exceeds the maximum allowed limit for currency.');
+        }
+
         $this->id = Uuid::v7();
         $this->amount = $amount;
         $this->currency = $currency;
