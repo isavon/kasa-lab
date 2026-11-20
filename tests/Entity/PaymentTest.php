@@ -83,4 +83,28 @@ class PaymentTest extends TestCase
         $payment = new Payment(1, Currency::UAH);
         $this->assertSame(1, $payment->getAmount());
     }
+
+    public static function maxAmounts(): array
+    {
+        return array_map(
+            fn (Currency $currency) => [$currency],
+            Currency::cases()
+        );
+    }
+
+    #[DataProvider('maxAmounts')]
+    public function testMaximumValidAmount(Currency $currency): void
+    {
+        $payment = new Payment($currency->maxAmount(), $currency);
+        $this->assertSame($currency->maxAmount(), $payment->getAmount());
+    }
+
+    #[DataProvider('maxAmounts')]
+    public function testAmountAboveMaximumIsRejected(Currency $currency): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessageIs('The amount exceeds the maximum allowed limit for currency.');
+
+        new Payment($currency->maxAmount() + 1, $currency);
+    }
 }
