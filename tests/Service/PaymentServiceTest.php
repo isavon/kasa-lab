@@ -7,11 +7,13 @@ namespace App\Tests\Service;
 use App\Entity\Payment;
 use App\Enum\Currency;
 use App\Enum\PaymentStatus;
+use App\Exception\PaymentNotFoundException;
 use App\Service\PaymentService;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\EntityRepository;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+use Symfony\Component\Uid\Uuid;
 
 class PaymentServiceTest extends KernelTestCase
 {
@@ -31,12 +33,33 @@ class PaymentServiceTest extends KernelTestCase
         $this->paymentService = static::getContainer()->get(PaymentService::class);
     }
 
+    private function assertPaymentMatches(Payment $expected, Payment $actual): void
+    {
+        $this->assertInstanceOf(Payment::class, $expected);
+        $this->assertNotSame($expected, $actual);
+        $this->assertSame((string) $actual->getId(), (string) $expected->getId());
+        $this->assertSame($actual->getAmount(), $expected->getAmount());
+        $this->assertSame($actual->getCurrency(), $expected->getCurrency());
+        $this->assertSame(PaymentStatus::PENDING, $expected->getStatus());
+        $this->assertSame($actual->getCreatedAt()->format(\DateTimeInterface::ATOM), $expected->getCreatedAt()->format(\DateTimeInterface::ATOM));
+        $this->assertSame($actual->getUpdatedAt()->format(\DateTimeInterface::ATOM), $expected->getUpdatedAt()->format(\DateTimeInterface::ATOM));
+        $this->assertSame('UTC', $actual->getCreatedAt()->getTimezone()->getName());
+        $this->assertSame('UTC', $expected->getCreatedAt()->getTimezone()->getName());
+        $this->assertSame('UTC', $actual->getUpdatedAt()->getTimezone()->getName());
+        $this->assertSame('UTC', $expected->getUpdatedAt()->getTimezone()->getName());
+    }
+
     public static function amounts(): array
     {
-        return array_map(
-            fn (Currency $currency) => [1250, $currency],
-            Currency::cases()
-        );
+        $data = [];
+
+        foreach (Currency::cases() as $currency) {
+            $data[$currency->value.' min'] = [1, $currency];
+            $data[$currency->value.' typical'] = [1250, $currency];
+            $data[$currency->value.' max'] = [$currency->maxAmount(), $currency];
+        }
+
+        return $data;
     }
 
     #[DataProvider('amounts')]
@@ -51,18 +74,7 @@ class PaymentServiceTest extends KernelTestCase
         $this->entityManager->clear();
 
         $paymentDb = $this->repository->find($payment->getId());
-        $this->assertNotNull($paymentDb);
-        $this->assertNotSame($paymentDb, $payment);
-        $this->assertSame((string) $payment->getId(), (string) $paymentDb->getId());
-        $this->assertSame($amount, $paymentDb->getAmount());
-        $this->assertSame($currency, $paymentDb->getCurrency());
-        $this->assertSame(PaymentStatus::PENDING, $paymentDb->getStatus());
-        $this->assertSame($payment->getCreatedAt()->format(\DateTimeInterface::ATOM), $paymentDb->getCreatedAt()->format(\DateTimeInterface::ATOM));
-        $this->assertSame($payment->getUpdatedAt()->format(\DateTimeInterface::ATOM), $paymentDb->getUpdatedAt()->format(\DateTimeInterface::ATOM));
-        $this->assertSame('UTC', $payment->getCreatedAt()->getTimezone()->getName());
-        $this->assertSame('UTC', $paymentDb->getCreatedAt()->getTimezone()->getName());
-        $this->assertSame('UTC', $payment->getUpdatedAt()->getTimezone()->getName());
-        $this->assertSame('UTC', $paymentDb->getUpdatedAt()->getTimezone()->getName());
+        $this->assertPaymentMatches($paymentDb, $payment);
 
         $this->assertCount(1, $this->repository->findAll());
     }
@@ -100,5 +112,78 @@ class PaymentServiceTest extends KernelTestCase
 
         $this->entityManager->clear();
         $this->assertCount(0, $this->repository->findAll());
+    }
+
+    #[DataProvider('amounts')]
+    public function testGetPayment(int $amount, Currency $currency): void
+    {
+        $payment = new Payment($amount, $currency);
+        $this->entityManager->persist($payment);
+        $this->entityManager->flush();
+
+        $this->entityManager->clear();
+
+        $paymentDb = $this->paymentService->get($payment->getId());
+        $this->assertPaymentMatches($paymentDb, $payment);
+
+        $this->assertCount(1, $this->repository->findAll());
+    }
+
+    public function testGetPaymentWhenMultipleExist(): void
+    {
+        $paymentFirst = new Payment(1250, Currency::UAH);
+        $this->entityManager->persist($paymentFirst);
+        $this->entityManager->flush();
+
+        $paymentSecond = new Payment(3600, Currency::USD);
+        $this->entityManager->persist($paymentSecond);
+        $this->entityManager->flush();
+
+        $this->entityManager->clear();
+
+        $paymentDb = $this->paymentService->get($paymentSecond->getId());
+        $this->assertPaymentMatches($paymentDb, $paymentSecond);
+
+        $this->assertCount(2, $this->repository->findAll());
+    }
+
+    public function testUnknownIdWithEmptyDb(): void
+    {
+        $id = Uuid::v7();
+
+        $this->expectException(PaymentNotFoundException::class);
+        $this->expectExceptionMessageIs(sprintf('Payment "%s" not found.', (string) $id));
+
+        $this->paymentService->get($id);
+    }
+
+    public function testUnknownIdWithNotEmptyDb(): void
+    {
+        $payment = new Payment(1250, Currency::UAH);
+        $this->entityManager->persist($payment);
+        $this->entityManager->flush();
+
+        $id = Uuid::v7();
+
+        $this->expectException(PaymentNotFoundException::class);
+        $this->expectExceptionMessageIs(sprintf('Payment "%s" not found.', (string) $id));
+
+        $this->paymentService->get($id);
+    }
+
+    public function testReadingChangesNothing(): void
+    {
+        $payment = new Payment(1250, Currency::UAH);
+        $this->entityManager->persist($payment);
+        $this->entityManager->flush();
+        $this->entityManager->clear();
+        $countRecords = count($this->repository->findAll());
+
+        $this->paymentService->get($payment->getId());
+        $this->entityManager->clear();
+
+        $paymentByRepository = $this->repository->find($payment->getId());
+        $this->assertSame($paymentByRepository->getUpdatedAt()->format(\DateTimeInterface::ATOM), $payment->getUpdatedAt()->format(\DateTimeInterface::ATOM));
+        $this->assertCount($countRecords, $this->repository->findAll());
     }
 }
