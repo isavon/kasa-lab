@@ -6,7 +6,9 @@ namespace App\Service;
 
 use App\Entity\Payment;
 use App\Enum\Currency;
+use App\Exception\PaymentNotFoundException;
 use Doctrine\ORM\EntityManagerInterface;
+use Symfony\Component\Uid\Uuid;
 
 class PaymentService
 {
@@ -21,6 +23,17 @@ class PaymentService
 
         $this->entityManager->persist($payment);
         $this->entityManager->flush();
+
+        return $payment;
+    }
+
+    public function get(Uuid $id): Payment
+    {
+        $payment = $this->entityManager->getRepository(Payment::class)->find($id);
+
+        if (!$payment) {
+            throw PaymentNotFoundException::forId($id);
+        }
 
         return $payment;
     }
