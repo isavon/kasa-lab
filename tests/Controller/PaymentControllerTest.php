@@ -7,7 +7,9 @@ namespace App\Tests\Controller;
 use App\Entity\Payment;
 use App\Enum\Currency;
 use App\Enum\PaymentStatus;
+use App\Service\PaymentService;
 use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\ORM\EntityRepository;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
@@ -18,11 +20,20 @@ class PaymentControllerTest extends WebTestCase
 {
     private KernelBrowser $client;
 
+    private EntityManagerInterface $entityManager;
+
+    private PaymentService $paymentService;
+
+    private EntityRepository $paymentRepository;
+
     protected function setUp(): void
     {
         parent::setUp();
 
         $this->client = static::createClient();
+        $this->entityManager = static::getContainer()->get(EntityManagerInterface::class);
+        $this->paymentService = static::getContainer()->get(PaymentService::class);
+        $this->paymentRepository = $this->entityManager->getRepository(Payment::class);
     }
 
     private function postJson(array|string $body): Response
@@ -41,25 +52,31 @@ class PaymentControllerTest extends WebTestCase
         return $this->client->getResponse();
     }
 
+    private function assertPaymentsCount(int $expectedCount): void
+    {
+        $this->entityManager->clear();
+        $this->assertCount($expectedCount, $this->paymentRepository->findAll());
+    }
+
     public static function amounts(): array
     {
         $data = [];
 
         foreach (Currency::cases() as $currency) {
-            $data[$currency->value.' min'] = [1, $currency->value];
-            $data[$currency->value.' typical'] = [1250, $currency->value];
-            $data[$currency->value.' max'] = [$currency->maxAmount(), $currency->value];
+            $data[$currency->value.' min'] = [1, $currency];
+            $data[$currency->value.' typical'] = [1250, $currency];
+            $data[$currency->value.' max'] = [$currency->maxAmount(), $currency];
         }
 
         return $data;
     }
 
     #[DataProvider('amounts')]
-    public function testCreatesPayment(int $amount, string $currency): void
+    public function testCreatesPayment(int $amount, Currency $currency): void
     {
         $payload = [
             'amount' => $amount,
-            'currency' => $currency,
+            'currency' => $currency->value,
         ];
         $response = $this->postJson($payload);
 
@@ -73,25 +90,19 @@ class PaymentControllerTest extends WebTestCase
         $this->assertArrayHasKey('id', $data);
         $this->assertTrue(Uuid::isValid($data['id']));
         $this->assertSame($amount, $data['amount']);
-        $this->assertSame($currency, $data['currency']);
+        $this->assertSame($currency->value, $data['currency']);
         $this->assertSame(PaymentStatus::PENDING->value, $data['status']);
         $this->assertResponseHeaderSame('Location', "/payments/{$data['id']}");
         $this->assertArrayHasKey('createdAt', $data);
         $this->assertNotFalse(\DateTimeImmutable::createFromFormat(\DateTimeImmutable::ATOM, $data['createdAt']));
 
-        $entityManager = static::getContainer()->get(EntityManagerInterface::class);
-        $entityManager->clear();
+        $this->assertPaymentsCount(1);
 
-        $paymentRepository = $entityManager->getRepository(Payment::class);
-
-        $payments = $paymentRepository->findAll();
-        $this->assertCount(1, $payments);
-
-        $payment = $paymentRepository->find($data['id']);
+        $payment = $this->paymentRepository->find($data['id']);
         $this->assertSame($data['id'], (string) $payment->getId());
         $this->assertSame($amount, $payment->getAmount());
         $this->assertSame($data['amount'], $payment->getAmount());
-        $this->assertSame($currency, $payment->getCurrency()->value);
+        $this->assertSame($currency, $payment->getCurrency());
         $this->assertSame($data['currency'], $payment->getCurrency()->value);
         $this->assertSame(PaymentStatus::PENDING, $payment->getStatus());
         $this->assertSame($data['status'], $payment->getStatus()->value);
@@ -186,13 +197,7 @@ class PaymentControllerTest extends WebTestCase
         $this->assertArrayHasKey('detail', $data);
         $this->assertStringContainsString($expectedFieldName, $data['detail']);
 
-        $entityManager = static::getContainer()->get(EntityManagerInterface::class);
-        $entityManager->clear();
-
-        $paymentRepository = $entityManager->getRepository(Payment::class);
-
-        $payments = $paymentRepository->findAll();
-        $this->assertCount(0, $payments);
+        $this->assertPaymentsCount(0);
     }
 
     public static function badRequestProvider(): array
@@ -217,13 +222,7 @@ class PaymentControllerTest extends WebTestCase
         $data = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
         $this->assertArrayHasKey('detail', $data);
 
-        $entityManager = static::getContainer()->get(EntityManagerInterface::class);
-        $entityManager->clear();
-
-        $paymentRepository = $entityManager->getRepository(Payment::class);
-
-        $payments = $paymentRepository->findAll();
-        $this->assertCount(0, $payments);
+        $this->assertPaymentsCount(0);
     }
 
     public function testExtraField(): void
@@ -240,13 +239,7 @@ class PaymentControllerTest extends WebTestCase
         $this->assertArrayHasKey('id', $data);
         $this->assertTrue(Uuid::isValid($data['id']));
 
-        $entityManager = static::getContainer()->get(EntityManagerInterface::class);
-        $entityManager->clear();
-
-        $paymentRepository = $entityManager->getRepository(Payment::class);
-
-        $payments = $paymentRepository->findAll();
-        $this->assertCount(1, $payments);
+        $this->assertPaymentsCount(1);
     }
 
     public function testInvariants(): void
@@ -256,12 +249,125 @@ class PaymentControllerTest extends WebTestCase
         $this->postJson(['amount' => '1250', 'currency' => 'UAH']);
         $this->postJson(['amount' => 12.5, 'currency' => 'UAH']);
 
-        $entityManager = static::getContainer()->get(EntityManagerInterface::class);
-        $entityManager->clear();
+        $this->assertPaymentsCount(0);
+    }
 
-        $paymentRepository = $entityManager->getRepository(Payment::class);
+    private function getPayment(string $id): Response
+    {
+        $this->client->request(
+            method: 'GET',
+            uri: "/payments/{$id}",
+        );
 
-        $payments = $paymentRepository->findAll();
-        $this->assertCount(0, $payments);
+        return $this->client->getResponse();
+    }
+
+    #[DataProvider('amounts')]
+    public function testGetPaymentSuccessfully(int $amount, Currency $currency): void
+    {
+        $payment = $this->paymentService->create($amount, $currency);
+        $this->assertInstanceOf(Payment::class, $payment);
+
+        $this->entityManager->clear();
+
+        $getPayment = $this->getPayment((string) $payment->getId());
+
+        $this->assertResponseStatusCodeSame(Response::HTTP_OK);
+
+        $content = $getPayment->getContent();
+
+        $this->assertJson($content);
+        $this->assertResponseHeaderSame('Content-Type', 'application/json');
+
+        $data = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame((string) $payment->getId(), $data['id']);
+        $this->assertSame($amount, $data['amount']);
+        $this->assertSame($currency->value, $data['currency']);
+        $this->assertSame(PaymentStatus::PENDING->value, $data['status']);
+        $this->assertArrayHasKey('createdAt', $data);
+        $this->assertNotFalse(\DateTimeImmutable::createFromFormat(\DateTimeImmutable::ATOM, $data['createdAt']));
+        $this->assertSame($data['createdAt'], $payment->getCreatedAt()->format(\DateTimeInterface::ATOM));
+        $this->assertEqualsCanonicalizing(['id', 'amount', 'currency', 'status', 'createdAt'], array_keys($data));
+    }
+
+    public function testContract(): void
+    {
+        $amount = 1250;
+        $currency = Currency::UAH;
+
+        $response = $this->postJson([
+            'amount' => $amount,
+            'currency' => $currency->value,
+        ]);
+        $this->assertResponseStatusCodeSame(Response::HTTP_CREATED);
+        $this->assertResponseHasHeader('Location');
+
+        $contentPost = $response->getContent();
+        $this->assertJson($contentPost);
+
+        $dataPost = json_decode($contentPost, true, 512, JSON_THROW_ON_ERROR);
+
+        $this->client->request('GET', $response->headers->get('Location'));
+        $this->assertResponseStatusCodeSame(Response::HTTP_OK);
+
+        $contentGet = $this->client->getResponse()->getContent();
+
+        $this->assertJson($contentGet);
+        $this->assertResponseHeaderSame('Content-Type', 'application/json');
+
+        $dataGet = json_decode($contentGet, true, 512, JSON_THROW_ON_ERROR);
+
+        $this->assertSame($dataPost, $dataGet);
+    }
+
+    public static function invalidUuidsProvider(): array
+    {
+        return [
+            'not exists uuid' => [(string) Uuid::v7()],
+            'not a uuid' => ['abc'],
+            'digits only' => ['123'],
+            'uuid with extra char' => [(string) Uuid::v7().'d'],
+            'uuid without hyphens' => [str_replace('-', '', (string) Uuid::v7())],
+            'uuid long' => ['sadfasdfasdfasdfasdfasdfasdfasdfsfasdfasdfasdfasdfasdfasdfasdfsdfafsdfasd'],
+        ];
+    }
+
+    #[DataProvider('invalidUuidsProvider')]
+    public function testGetPaymentValidationErrors(string $id): void
+    {
+        $response = $this->getPayment($id);
+        $this->assertResponseStatusCodeSame(Response::HTTP_NOT_FOUND);
+        $this->assertResponseHeaderSame('Content-Type', 'application/json');
+
+        $content = $response->getContent();
+        $this->assertJson($content);
+
+        $data = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertArrayHasKey('detail', $data);
+    }
+
+    public function testPostPaymentByIdNotAllowed(): void
+    {
+        $id = (string) Uuid::v7();
+        $this->client->request('POST', "/payments/{$id}");
+        $this->assertResponseStatusCodeSame(Response::HTTP_METHOD_NOT_ALLOWED);
+    }
+
+    public function testGetPaymentWithUpperId(): void
+    {
+        $payment = $this->paymentService->create(1250, Currency::USD);
+        $this->assertInstanceOf(Payment::class, $payment);
+
+        $this->entityManager->clear();
+
+        $response = $this->getPayment(strtoupper((string) $payment->getId()));
+        $this->assertResponseStatusCodeSame(Response::HTTP_OK);
+        $this->assertResponseHeaderSame('Content-Type', 'application/json');
+
+        $content = $response->getContent();
+        $this->assertJson($content);
+
+        $data = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame((string) $payment->getId(), $data['id']);
     }
 }
